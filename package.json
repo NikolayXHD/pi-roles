@@ -1,0 +1,13 @@
+{
+  "name": "pi-template",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "handlebars": "^4.7.10"
+  },
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  }
+}
