@@ -16,7 +16,8 @@
  *
  * Zone C (ui-model.ts): `"var"` records (strict payload, last value, `"role"`
  * ignored), overridable variable selection and `/template` menu composition
- * (including rewriting files on disk), computed value age, the status line.
+ * (including rewriting files on disk), computed value age, the status line
+ * and the quick-switch rings (`ctrl+r`/`alt+r`).
  *
  * Live scenarios against a pi process — in the zone B report
  * (`.task/current/23_template-implementation/2_consumption/report.md`).
@@ -51,8 +52,11 @@ import {
 	implicitLine,
 	menuItemLabel,
 	menuItems,
+	nextStatusVariable,
+	nextVariableValue,
 	readVarOverrides,
 	statusLineText,
+	statusVariableChoices,
 	variableFacts,
 } from "./ui-model.ts";
 import { ContextVersions, sourceStamps, stampsDiffer } from "./versions.ts";
@@ -252,6 +256,23 @@ scenario("when_template_json_rejected_then_problem_reported", async () => {
 	}
 	const collision = parseVarsConfig(JSON.stringify({ vars: { PATH: { initial: "x" } } }), { PATH: "bin" });
 	assert("problem" in collision && /collides/.test(collision.problem), "collision with env not rejected");
+});
+
+scenario("when_status_variable_rejected_then_problem_names_variable", async () => {
+	const undeclared = parseVarsConfig(JSON.stringify({ vars: { role: { values: ["a"] } }, statusVariable: "mode" }), NO_ENV);
+	assert("problem" in undeclared && undeclared.problem.includes('"mode"'), `undeclared name not named: ${undeclared.problem ?? ""}`);
+	const noList = parseVarsConfig(JSON.stringify({ vars: { role: { initial: "a" } }, statusVariable: "role" }), NO_ENV);
+	assert("problem" in noList && noList.problem.includes('"role"'), `variable without a list not named: ${noList.problem ?? ""}`);
+	const emptyList = parseVarsConfig(JSON.stringify({ vars: { role: { values: [] } }, statusVariable: "role" }), NO_ENV);
+	assert("problem" in emptyList, "an empty value list was accepted");
+	const notString = parseVarsConfig(JSON.stringify({ vars: {}, statusVariable: 5 }), NO_ENV);
+	assert("problem" in notString, "a non-string statusVariable was accepted");
+
+	const loaded = parseVarsConfig(JSON.stringify({ vars: { role: { values: ["a"] } }, statusVariable: "role" }), NO_ENV);
+	assertEqual(loaded, { vars: { role: { values: ["a"] } }, statusVariable: "role" }, "statusVariable not parsed");
+	// A shell list is declared but its emptiness is known only at runtime.
+	const shellList = parseVarsConfig(JSON.stringify({ vars: { role: { values: { shell: "ls" } } }, statusVariable: "role" }), NO_ENV);
+	assert(!("problem" in shellList), "a shell value list was rejected");
 });
 
 // ============================================================================
@@ -2389,6 +2410,130 @@ scenario("when_variable_change_written_then_payload_strict", async () => {
 	assertEqual(entries.length, 1, "a record on repeat or refusal");
 });
 
+/** `ctrl+r`: the next value of the status variable is a session override — the context is not applied. */
+scenario("when_status_value_cycled_then_session_override_without_apply", async () => {
+	await withTempTree(async ({ agentDir, projectDir, write }) => {
+		write(
+			"agent/template.json",
+			JSON.stringify({
+				vars: {
+					role: { values: ["preflight", "develop"], initial: "preflight" },
+					branch: { values: { shell: "false" }, initial: "main" },
+				},
+				statusVariable: "role",
+			}),
+		);
+		write("agent/AGENTS.md.template", "Role {{role}}");
+		const target = join(agentDir, "AGENTS.md");
+		const warnings = [];
+		const session = makeSession({ agentDir, projectDir, execute: async () => ({ code: 1, stdout: "", stderr: "boom" }) });
+		await session.start(sessionHost(warnings), "startup");
+		await session.beforeAgentStart({ systemPromptOptions: {} }, sessionHost(warnings));
+		assertEqual(readFileSync(target, "utf-8"), "Role preflight", "startup target file");
+		assertEqual(session.statusVariable(), "role", "statusVariable not read from the config");
+		assertEqual(session.currentValues().branch, undefined, "a failed value list gives no list to cycle");
+		assertEqual(
+			statusLineText(session.isStale(), session.statusVariable(), session.currentView()),
+			"template ✓ role=preflight",
+			"status before the cycle",
+		);
+
+		const entries = [];
+		const writeEntry = (customType, data) => entries.push([customType, data]);
+		const first = nextVariableValue(session.currentValues().role, session.currentView().role);
+		const changed = await changeVariable(session, writeEntry, "role", first);
+		assertEqual(changed, { ok: true, written: true }, "the first cycle did not change the value");
+		assertEqual(entries, [["var", { name: "role", value: "develop" }]], "var record of the first cycle");
+		assertEqual(readFileSync(target, "utf-8"), "Role preflight", "the cycle applied the context");
+		assertEqual(session.isStale(), true, "the cycle did not mark the context stale");
+		assertEqual(
+			statusLineText(session.isStale(), session.statusVariable(), session.currentView()),
+			"template ! role=develop",
+			"status after the first cycle",
+		);
+
+		const second = nextVariableValue(session.currentValues().role, session.currentView().role);
+		assertEqual(second, "preflight", "the value ring did not wrap");
+		await changeVariable(session, writeEntry, "role", second);
+		assertEqual(entries.length, 2, "the second cycle did not write a record");
+		session.shutdown("quit");
+	});
+});
+
+/** `alt+r`: the next status variable of the ring is written into `template.json`. */
+scenario("when_status_variable_cycled_then_field_written_rest_kept", async () => {
+	await withTempTree(async ({ agentDir, projectDir, write }) => {
+		const vars = {
+			role: { values: ["preflight", "develop"], initial: "preflight" },
+			mode: { values: ["plan", "code"], initial: "plan" },
+			note: { initial: "draft" },
+		};
+		const configPath = write("agent/template.json", JSON.stringify({ vars }));
+		write("agent/AGENTS.md.template", "Role {{role}}; mode {{mode}}");
+		const warnings = [];
+		const session = makeSession({ agentDir, projectDir });
+		await session.start(sessionHost(warnings), "startup");
+
+		const choices = statusVariableChoices(session.currentValues());
+		assertEqual(choices, ["role", "mode"], "the ring excludes a variable without a list");
+		assertEqual(nextStatusVariable(choices, session.statusVariable()), "role", "the first choice");
+
+		const first = session.saveStatusVariable(nextStatusVariable(choices, session.statusVariable()));
+		assertEqual(first, { ok: true }, "the status variable was not written");
+		assertEqual(session.statusVariable(), "role", "the session did not adopt the re-read config");
+		assertEqual(
+			JSON.parse(readFileSync(configPath, "utf-8")),
+			{ vars, statusVariable: "role" },
+			"the field was not added or the rest changed",
+		);
+		assertEqual(
+			statusLineText(session.isStale(), session.statusVariable(), session.currentView()),
+			"template ✓ role=preflight",
+			"status of the first choice",
+		);
+		assertEqual(loadVarsConfig(agentDir, NO_ENV).statusVariable, "role", "the file does not parse after the write");
+
+		const second = session.saveStatusVariable(nextStatusVariable(choices, session.statusVariable()));
+		assertEqual(second, { ok: true }, "the second choice was not written");
+		assertEqual(loadVarsConfig(agentDir, NO_ENV).statusVariable, "mode", "the field after the second choice");
+		assertEqual(
+			statusLineText(session.isStale(), session.statusVariable(), session.currentView()),
+			"template ✓ mode=plan",
+			"status of the second choice",
+		);
+		assertEqual(nextStatusVariable(choices, "mode"), "role", "the variable ring does not wrap");
+		session.shutdown("quit");
+	});
+});
+
+/** A failed write leaves the current status variable and the file as is. */
+scenario("when_status_variable_write_fails_then_variable_unchanged", async () => {
+	await withTempTree(async ({ agentDir, projectDir, write }) => {
+		const configPath = write(
+			"agent/template.json",
+			JSON.stringify({ vars: { role: { values: ["a"], initial: "a" } }, statusVariable: "role" }),
+		);
+		write("agent/AGENTS.md.template", "Role {{role}}");
+		const warnings = [];
+		const session = makeSession({ agentDir, projectDir });
+		await session.start(sessionHost(warnings), "startup");
+
+		writeFileSync(configPath, "{broken");
+		const broken = session.saveStatusVariable("role");
+		assertEqual(broken.ok, false, "a broken config did not fail the write");
+		assert(typeof broken.problem === "string" && broken.problem.length > 0, "no reason of the write failure");
+		assertEqual(readFileSync(configPath, "utf-8"), "{broken", "the failed write touched the config file");
+		assertEqual(session.statusVariable(), "role", "the failed write changed the current variable");
+
+		rmSync(configPath);
+		mkdirSync(configPath);
+		const unreadable = session.saveStatusVariable("role");
+		assertEqual(unreadable.ok, false, "a directory instead of the config did not fail the write");
+		assertEqual(session.statusVariable(), "role", "the read failure changed the current variable");
+		session.shutdown("quit");
+	});
+});
+
 /** Change menu: overridable only; computed — recompute, implicit hidden. */
 scenario("when_menu_selected_then_computed_and_implicit_excluded", async () => {
 	// A live session returns only declared variables in `currentValues()`
@@ -2495,40 +2640,45 @@ scenario("when_age_formatted_then_compact", async () => {
 	);
 });
 
-/** Status line: a state glyph and overrides compactly. */
-scenario("when_status_text_then_stale_and_overrides", async () => {
-	const fact = (name, value) => ({
-		name,
-		value,
-		values: undefined,
-		computed: false,
-		ageMs: undefined,
-		overridden: true,
-		implicit: false,
-	});
-	assertEqual(statusLineText(false, []), "template ✓", "status without overrides");
+/** Status line: a state glyph and the status variable pair. */
+scenario("when_status_text_then_glyph_and_status_variable", async () => {
+	assertEqual(statusLineText(false, undefined, {}), "template ✓", "status without a variable");
+	assertEqual(statusLineText(true, undefined, {}), "template !", "stale status without a variable");
+	assertEqual(statusLineText(true, "role", { role: "develop" }), "template ! role=develop", "status with the variable");
+	assertEqual(statusLineText(false, "role", { role: "" }), "template ✓ role=—", "empty value");
 	assertEqual(
-		statusLineText(true, [fact("role", "develop")]),
-		"template ! · role=develop",
-		"status with an override",
-	);
-	assertEqual(
-		statusLineText(true, [fact("a", "1"), fact("b", "2"), fact("c", "3"), fact("d", "4")]),
-		"template ! · a=1, b=2, c=3, +1",
-		"overrides not compact",
-	);
-	assertEqual(
-		statusLineText(true, [fact("long", "0123456789abcdefghij")]),
-		"template ! · long=0123456789abcde…",
+		statusLineText(false, "long", { long: "0123456789abcdefghij" }),
+		"template ✓ long=0123456789abcde…",
 		"long value not truncated",
 	);
-	assertEqual(statusLineText(undefined, []), "template ‼", "status without a view");
+	assertEqual(statusLineText(undefined, undefined, {}), "template ‼", "status without a view");
 	assertEqual(
 		implicitLine({ model: "p/m", level: "max" }),
 		"model = p/m · level = max (implicit, read-only)",
 		"implicit variable row",
 	);
 	assertEqual(implicitLine({}), "model = — · level = — (implicit, read-only)", "implicit row without values");
+});
+
+/** Status variable ring: declared variables with a non-empty value list. */
+scenario("when_status_variable_choices_then_ring_over_value_lists", async () => {
+	const values = { role: ["preflight", "develop"], note: undefined, empty: [], branch: ["main"] };
+	assertEqual(statusVariableChoices(values), ["role", "branch"], "choices not filtered by the value list");
+	assertEqual(statusVariableChoices({}), [], "choices of an empty view");
+	assertEqual(nextStatusVariable(["role", "branch"], undefined), "role", "first choice without a current one");
+	assertEqual(nextStatusVariable(["role", "branch"], "role"), "branch", "next choice after the current one");
+	assertEqual(nextStatusVariable(["role", "branch"], "branch"), "role", "choice ring does not wrap");
+	assertEqual(nextStatusVariable(["role"], "gone"), "role", "first choice when the current one is not in the ring");
+	assertEqual(nextStatusVariable([], "role"), undefined, "a choice ring out of nothing");
+});
+
+/** Value ring of the status variable. */
+scenario("when_status_variable_value_cycled_then_ring", async () => {
+	assertEqual(nextVariableValue(["preflight", "develop"], "preflight"), "develop", "next value");
+	assertEqual(nextVariableValue(["preflight", "develop"], "develop"), "preflight", "value ring does not wrap");
+	assertEqual(nextVariableValue(["preflight", "develop"], "gone"), "preflight", "first value outside the list");
+	assertEqual(nextVariableValue(["only"], "only"), "only", "single-value ring");
+	assertEqual(nextVariableValue([], "gone"), undefined, "value ring of an empty list");
 });
 
 /** Menu facts from a live session: a computed one with age, an override. */

@@ -1,16 +1,18 @@
 /**
  * ui.ts — the extension's only command `/template` and the status line.
  *
- * Menu (pi-tui, like the old roles extension, without its `cycle`/Ctrl+R
- * mechanics): session context status, variable values (computed ones with
- * value age), changing overridable variables, recomputing the given
- * computed variable, recomputing all, the "update current session context"
- * button (`apply()`) and the "rewrite files on disk" button.
+ * Menu (pi-tui, like the old roles extension): session context status,
+ * variable values (computed ones with value age), changing overridable
+ * variables, recomputing the given computed variable, recomputing all, the
+ * "update current session context" button (`apply()`) and the "rewrite
+ * files on disk" button.
  *
  * A variable change writes a `"var"` record (payload `{name, value}`) and
  * does not apply the context — only marks it stale. The status line is a
- * single `template` key: one glyph for the state plus compact session
- * overrides.
+ * single `template` key: one glyph for the state plus the pair of the
+ * variable named by the top-level `statusVariable`. The `ctrl+r`/`alt+r`
+ * shortcuts cycle the value of that variable (a session override, no apply)
+ * and the variable itself (written into `template.json`).
  */
 
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext, Theme, ThemeColor } from "@earendil-works/pi-coding-agent";
@@ -25,7 +27,10 @@ import {
 	implicitLine,
 	menuItemLabel,
 	menuItems,
+	nextStatusVariable,
+	nextVariableValue,
 	statusLineText,
+	statusVariableChoices,
 	variableFacts,
 } from "./ui-model.ts";
 
@@ -51,25 +56,77 @@ export function registerTemplateCommand(pi: ExtensionAPI, deps: TemplateUiDeps):
 	});
 }
 
-/** Status line: one state glyph and session overrides. */
-export function updateTemplateStatus(
-	ctx: ExtensionContext,
-	session: TemplateSession | undefined,
-	overrides: Readonly<Record<string, string>>,
-): void {
+/** Status line: one state glyph and the status variable pair. */
+export function updateTemplateStatus(ctx: ExtensionContext, session: TemplateSession | undefined): void {
 	try {
 		if (session === undefined) {
 			ctx.ui.setStatus(STATUS_KEY, undefined);
 			return;
 		}
 		if (!session.ready()) {
-			ctx.ui.setStatus(STATUS_KEY, statusLineText(undefined, []));
+			ctx.ui.setStatus(STATUS_KEY, statusLineText(undefined, undefined, {}));
 			return;
 		}
-		ctx.ui.setStatus(STATUS_KEY, statusLineText(session.isStale(), overriddenFacts(session, overrides)));
+		ctx.ui.setStatus(STATUS_KEY, statusLineText(session.isStale(), session.statusVariable(), session.currentView()));
 	} catch {
 		// The context was replaced or the UI is gone: the status is not critical.
 	}
+}
+
+/**
+ * `ctrl+r`: the next value of the status variable as a session override. The
+ * context is not applied — only marked stale; a variable without a value
+ * list does nothing. Shortcuts are dispatched by the interactive mode only,
+ * so outside it (RPC/headless) the call does nothing.
+ */
+export async function cycleStatusVariableValue(
+	pi: ExtensionAPI,
+	deps: TemplateUiDeps,
+	ctx: ExtensionContext,
+): Promise<void> {
+	if (ctx.mode !== "tui") return;
+	const session = deps.sessionOf(ctx);
+	if (session === undefined || !session.ready()) return;
+	const name = session.statusVariable();
+	if (name === undefined) return;
+	const values = session.currentValues()[name];
+	if (values === undefined || values.length === 0) return;
+	const value = nextVariableValue(values, session.currentView()[name]);
+	if (value === undefined) return;
+	const overrides = deps.overridesOf(ctx);
+	const result = await changeVariable(session, (customType, data) => pi.appendEntry(customType, data), name, value);
+	if (!result.ok) {
+		ctx.ui.notify(`pi-template: ${name} not changed — ${result.problem ?? "unknown reason"}`, "warning");
+		return;
+	}
+	if (result.written) overrides[name] = value;
+	updateTemplateStatus(ctx, session);
+	ctx.ui.notify(
+		result.written ? `pi-template: ${name} = ${value}` : `pi-template: ${name} = ${value} — already set`,
+		"info",
+	);
+}
+
+/**
+ * `alt+r`: the next status variable of the ring, written into `template.json`.
+ * Outside the interactive mode (RPC/headless) the call does nothing.
+ */
+export function cycleStatusVariable(deps: TemplateUiDeps, ctx: ExtensionContext): void {
+	if (ctx.mode !== "tui") return;
+	const session = deps.sessionOf(ctx);
+	if (session === undefined || !session.ready()) return;
+	const next = nextStatusVariable(statusVariableChoices(session.currentValues()), session.statusVariable());
+	if (next === undefined) {
+		ctx.ui.notify("pi-template: no variable with a values list", "warning");
+		return;
+	}
+	const saved = session.saveStatusVariable(next);
+	if (!saved.ok) {
+		ctx.ui.notify(`pi-template: status variable not changed — ${saved.problem ?? "unknown reason"}`, "warning");
+		return;
+	}
+	updateTemplateStatus(ctx, session);
+	ctx.ui.notify(`pi-template: status variable = ${next}`, "info");
 }
 
 /** Clear the status (session runtime shutdown). */
@@ -260,7 +317,7 @@ async function performMenuItem(
 	}
 	if (item.action === "apply") {
 		const applied = session.apply();
-		updateTemplateStatus(ctx, session, overrides);
+		updateTemplateStatus(ctx, session);
 		ctx.ui.notify(
 			applied ? "pi-template: context updated — delivery on the next turn" : "pi-template: nothing to apply",
 			applied ? "info" : "warning",
@@ -269,7 +326,7 @@ async function performMenuItem(
 	}
 	if (item.action === "recomputeAll") {
 		const result = await session.recomputeAll();
-		updateTemplateStatus(ctx, session, overrides);
+		updateTemplateStatus(ctx, session);
 		ctx.ui.notify(
 			result.ok
 				? "pi-template: variables recomputed"
@@ -281,21 +338,16 @@ async function performMenuItem(
 	const facts = item.facts;
 	if (facts === undefined) return "done";
 	if (item.action === "recompute") {
-		await recomputeVariable(ctx, session, overrides, facts.name);
+		await recomputeVariable(ctx, session, facts.name);
 		return "done";
 	}
 	return changeSessionVariable(pi, ctx, session, overrides, facts);
 }
 
 /** Recompute the given shell/env variable; the context is not applied. */
-async function recomputeVariable(
-	ctx: ExtensionCommandContext,
-	session: TemplateSession,
-	overrides: Readonly<Record<string, string>>,
-	name: string,
-): Promise<void> {
+async function recomputeVariable(ctx: ExtensionCommandContext, session: TemplateSession, name: string): Promise<void> {
 	const result = await session.recompute(name);
-	updateTemplateStatus(ctx, session, overrides);
+	updateTemplateStatus(ctx, session);
 	if (!result.ok) {
 		ctx.ui.notify(`pi-template: ${name} not recomputed — ${result.problem ?? "unknown reason"}`, "warning");
 		return;
@@ -326,7 +378,7 @@ async function changeSessionVariable(
 		return "done";
 	}
 	if (result.written) overrides[facts.name] = value;
-	updateTemplateStatus(ctx, session, overrides);
+	updateTemplateStatus(ctx, session);
 	if (!result.written) {
 		ctx.ui.notify(`pi-template: ${facts.name} = ${value} — already set`, "info");
 		return "done";
@@ -356,10 +408,6 @@ function menuDigest(session: TemplateSession, items: readonly MenuItem[]): strin
 	for (const item of items) lines.push(`  ${menuItemLabel(item)}`);
 	lines.push("UI unavailable — nothing changed");
 	return lines.join("\n");
-}
-
-function overriddenFacts(session: TemplateSession, overrides: Readonly<Record<string, string>>): VariableFacts[] {
-	return variableFacts(session, overrides).filter((fact) => fact.overridden);
 }
 
 function errorMessage(error: unknown): string {

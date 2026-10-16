@@ -51,7 +51,8 @@ agent directory:
       "values": { "shell": "basename -s .md.template modes/*.md.template" },
       "initial": "plan"
     }
-  }
+  },
+  "statusVariable": "mode"
 }
 ```
 
@@ -94,9 +95,15 @@ variables:
       "initial": { "shell": "git rev-parse --abbrev-ref HEAD" },
       "cwd": "project"
     }
-  }
+  },
+  "statusVariable": "vllm"
 }
 ```
+
+The top-level **`statusVariable`** names the variable the status line shows
+(`template ✓ vllm=on`); it must name a declared variable with a non-empty
+value list — otherwise the config is an error. Without the field the status
+line is just the state glyph.
 
 Variable fields:
 
@@ -188,13 +195,23 @@ The extension's only command opens the context management menu:
 - "rewrite files on disk" — writing the current version into the targets
   without applying it.
 
-There is no cycling through values. A variable change is recorded in the
+A variable change is recorded in the
 session (`customType: "var"`, payload `{name, value}`) and does not update
 the context by itself — only the status changes. Resume picks up the last
 value of each variable from the records.
 
-**The status line** shows `template ✓` / `template !` /
-`template ‼`, with session overrides compactly (`name=value`, then `+N`).
+The quick switch cycles values without the menu: `ctrl+r` takes the next
+value of the status variable, `alt+r` takes the next variable of the ring —
+declared ones with a non-empty value list. A value change is a session
+override, exactly as a menu change: the context is not applied; `alt+r`
+writes its choice into `template.json` immediately. In pi `ctrl+r` is the
+built-in "rename session" shortcut; the extension overrides it — pi reports
+the conflict on startup.
+
+**The status line** shows one state glyph (`✓` applied, `!` a re-render is
+waiting, `‼` no view) and, when `statusVariable` is set, its pair:
+`template ✓ vllm=on` (a long value is compacted). The fact of a session
+override stays in the menu (`session override`).
 
 ## Session context versions
 

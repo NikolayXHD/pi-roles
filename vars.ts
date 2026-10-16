@@ -7,9 +7,10 @@
  * `{"shell": …}`), `initial` (a string, `{"shell": …}`, `{"env": "VAR"}`),
  * `cwd` (`"agent"` by default, `"project"`) and subagent values `@` (any
  * subagent) / `@<agent name>` (a specific one, over `@`) — strings only,
- * they replace both the machine and the computed value. An unknown key is a
- * config error. The `model` and `level` variables are implicit; declaring
- * them is an error.
+ * they replace both the machine and the computed value. The top-level
+ * `statusVariable` names the variable the status line shows. An unknown key
+ * is a config error. The `model` and `level` variables are implicit;
+ * declaring them is an error.
  *
  * Shell contract:
  * - commands run in the platform system shell (POSIX — `sh -c`, win32 —
@@ -35,7 +36,8 @@
 
 import { spawn } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { randomBytes } from "node:crypto";
+import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 /** Shell command timeout, ms. */
@@ -72,6 +74,8 @@ export interface VariableSpec {
 
 export interface VarsConfig {
 	vars: Record<string, VariableSpec>;
+	/** Top-level `statusVariable`: the variable of the status line. */
+	statusVariable?: string;
 }
 
 export type VarsConfigLoad = VarsConfig | { problem: string };
@@ -118,7 +122,7 @@ export function parseVarsConfig(text: string, env: Record<string, string | undef
 	}
 	if (!isRecord(value)) return { problem: `${CONFIG_FILE} must be an object` };
 
-	const unknown = unknownKey(value, ["vars"]);
+	const unknown = unknownKey(value, ["vars", "statusVariable"]);
 	if (unknown) return { problem: `${CONFIG_FILE}: ${unknown}` };
 
 	const vars: Record<string, VariableSpec> = {};
@@ -133,7 +137,11 @@ export function parseVarsConfig(text: string, env: Record<string, string | undef
 			vars[name] = spec;
 		}
 	}
-	return { vars };
+	const status = parseStatusVariable(value.statusVariable, vars);
+	if (status.problem !== undefined) return { problem: status.problem };
+	const config: VarsConfig = { vars };
+	if (status.name !== undefined) config.statusVariable = status.name;
+	return config;
 }
 
 /** Read `template.json` from the agent directory; no file — an empty config. */
@@ -147,6 +155,37 @@ export function loadVarsConfig(agentDir: string, env?: Record<string, string | u
 		return { problem: `${CONFIG_FILE} cannot be read: ${errorMessage(error)}` };
 	}
 	return parseVarsConfig(text, env ?? process.env);
+}
+
+/**
+ * Set the top-level `statusVariable` of `template.json` and write the file
+ * atomically (a temporary file plus renaming). Other content keeps its
+ * values; the file is re-serialized.
+ */
+export function writeStatusVariable(agentDir: string, name: string): { ok: boolean; problem?: string } {
+	const path = join(agentDir, CONFIG_FILE);
+	let text: string;
+	try {
+		text = readFileSync(path, "utf-8");
+	} catch (error) {
+		return { ok: false, problem: `${CONFIG_FILE} cannot be read: ${errorMessage(error)}` };
+	}
+	let value: unknown;
+	try {
+		value = JSON.parse(text);
+	} catch (error) {
+		return { ok: false, problem: `${CONFIG_FILE} does not parse as JSON: ${errorMessage(error)}` };
+	}
+	if (!isRecord(value)) return { ok: false, problem: `${CONFIG_FILE} must be an object` };
+	value.statusVariable = name;
+	try {
+		const temporary = `${path}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
+		writeFileSync(temporary, `${JSON.stringify(value, null, 2)}\n`);
+		renameSync(temporary, path);
+	} catch (error) {
+		return { ok: false, problem: `${CONFIG_FILE} not written: ${errorMessage(error)}` };
+	}
+	return { ok: true };
 }
 
 export interface ShellExecution {
@@ -374,6 +413,21 @@ function sortKeys(value: unknown): unknown {
 		return sorted;
 	}
 	return value;
+}
+
+/**
+ * Top-level `statusVariable`: names a declared variable with a non-empty
+ * value list. A shell list is accepted — emptiness is known only at runtime.
+ */
+function parseStatusVariable(raw: unknown, vars: Record<string, VariableSpec>): { name?: string; problem?: string } {
+	if (raw === undefined) return {};
+	if (typeof raw !== "string") return { problem: `${CONFIG_FILE}: "statusVariable" must be a string` };
+	const spec = vars[raw];
+	if (spec === undefined) return { problem: `${CONFIG_FILE}: status variable "${raw}" is not declared` };
+	if (spec.values === undefined || (Array.isArray(spec.values) && spec.values.length === 0)) {
+		return { problem: `${CONFIG_FILE}: status variable "${raw}" must have a non-empty value list` };
+	}
+	return { name: raw };
 }
 
 function parseVariableSpec(name: string, raw: unknown): VariableSpec | { problem: string } {

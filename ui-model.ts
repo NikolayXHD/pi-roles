@@ -2,7 +2,8 @@
  * ui-model.ts — data and rules of the `/template` menu without pi imports:
  * session records `"var"` (writing and reading the last value), variable
  * facts, selecting overridable variables, menu row labels, computed value
- * age and the status line. The module is checked by probe.mjs.
+ * age, the status line and the quick-switch rings (`ctrl+r`/`alt+r`). The
+ * module is checked by probe.mjs.
  *
  * Records: `"var"` is the only record the extension writes, payload
  * strictly `{name, value}`; old-format records (`customType: "role"`) and
@@ -152,14 +153,51 @@ export function implicitLine(view: Record<string, string>): string {
 }
 
 /**
- * Status line text: `template <glyph>` plus session overrides compactly
- * (up to three pairs, then `+N`). `stale === undefined` means no view was
- * built (a broken config).
+ * Status line text: `template <glyph>` plus the status variable pair
+ * (`name=value`, the value compacted). The variable is the top-level
+ * `statusVariable`; without it the line is just the glyph. `stale ===
+ * undefined` means no view was built (a broken config).
  */
-export function statusLineText(stale: boolean | undefined, overrides: readonly VariableFacts[]): string {
-	const compact = compactOverrides(overrides);
+export function statusLineText(
+	stale: boolean | undefined,
+	statusVariable: string | undefined,
+	view: Readonly<Record<string, string>>,
+): string {
 	const base = `template ${contextStatusMark(stale)}`;
-	return compact === undefined ? base : `${base} · ${compact}`;
+	if (statusVariable === undefined) return base;
+	return `${base} ${statusVariable}=${shortValue(view[statusVariable])}`;
+}
+
+/**
+ * Variables the status line can show: declared ones with a non-empty value
+ * list, in declaration order.
+ */
+export function statusVariableChoices(values: Readonly<Record<string, string[] | undefined>>): string[] {
+	const choices: string[] = [];
+	for (const [name, list] of Object.entries(values)) {
+		if (list !== undefined && list.length > 0) choices.push(name);
+	}
+	return choices;
+}
+
+/**
+ * Next status variable of the ring: after `current`; the first one when
+ * `current` is not among the choices. `undefined` — nothing to switch to.
+ */
+export function nextStatusVariable(choices: readonly string[], current: string | undefined): string | undefined {
+	if (choices.length === 0) return undefined;
+	const at = current === undefined ? -1 : choices.indexOf(current);
+	return choices[(at + 1) % choices.length];
+}
+
+/**
+ * Next value of the ring: after `current`; the first one when `current` is
+ * not in the list. `undefined` — the list is empty.
+ */
+export function nextVariableValue(values: readonly string[], current: string | undefined): string | undefined {
+	if (values.length === 0) return undefined;
+	const at = current === undefined ? -1 : values.indexOf(current);
+	return values[(at + 1) % values.length];
 }
 
 /** Minimum session for changing a variable (structural type of `TemplateSession`). */
@@ -194,15 +232,7 @@ export async function changeVariable(
 	return { ok: true, written: true };
 }
 
-const MAX_STATUS_OVERRIDES = 3;
 const SHORT_VALUE_LIMIT = 16;
-
-function compactOverrides(overrides: readonly VariableFacts[]): string | undefined {
-	if (overrides.length === 0) return undefined;
-	const pairs = overrides.slice(0, MAX_STATUS_OVERRIDES).map((fact) => `${fact.name}=${shortValue(fact.value)}`);
-	if (overrides.length > MAX_STATUS_OVERRIDES) pairs.push(`+${overrides.length - MAX_STATUS_OVERRIDES}`);
-	return pairs.join(", ");
-}
 
 function shortValue(value: string | undefined): string {
 	const text = value === undefined || value === "" ? "—" : value;

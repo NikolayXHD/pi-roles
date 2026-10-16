@@ -1,6 +1,7 @@
 /**
  * Live zone C check on pi SDK 1.2.0: the `/template` command, the menu,
- * status, `"var"` records, apply, resume, `"role"` ignored.
+ * status, `"var"` records, apply, resume, `"role"` ignored and the
+ * `ctrl+r`/`alt+r` quick switch.
  */
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -91,6 +92,7 @@ async function makeEnvironment(root, entries) {
 				branch: { initial: { shell: "printf 'main\\n'" } },
 				home: { initial: { env: "HOME" } },
 			},
+			statusVariable: "role",
 		}),
 	);
 	writeFileSync(join(projectDir, "AGENTS.md.template"), "Role {{role}}; branch {{branch}}");
@@ -159,7 +161,7 @@ const target = join(env.projectDir, "AGENTS.md");
 const initialTarget = readFileSync(target, "utf-8");
 check(initialTarget === "Role preflight; branch main", `startup target file: ${JSON.stringify(initialTarget)}`);
 const statuses = state.statuses.filter(([key]) => key === "template").map(([, text]) => text);
-check(statuses.includes("template ✓"), `status after start: ${JSON.stringify(statuses)}`);
+check(statuses.includes("template ✓ role=preflight"), `status after start: ${JSON.stringify(statuses)}`);
 
 // RPC menu: first change role, then the value develop.
 state.script.push("role = preflight", "develop");
@@ -179,7 +181,7 @@ const varEntries = env.sessionManager.getEntries().filter((entry) => entry.type 
 check(varEntries.length === 1 && varEntries[0].data.name === "role" && varEntries[0].data.value === "develop", `var record: ${JSON.stringify(varEntries.map((entry) => entry.data))}`);
 check(readFileSync(target, "utf-8") === "Role preflight; branch main", "variable change did not apply the context");
 const staleStatus = state.statuses.filter(([key]) => key === "template").map(([, text]) => text).at(-1);
-check(staleStatus === "template ! · role=develop", `status after the change: ${staleStatus}`);
+check(staleStatus === "template ! role=develop", `status after the change: ${staleStatus}`);
 check(state.notifications.at(-1)?.message === "pi-template: role = develop — !", `message after the change: ${state.notifications.at(-1)?.message}`);
 
 // Apply button.
@@ -187,7 +189,7 @@ state.script.push("update current session context");
 await command.handler("", runner.createCommandContext());
 check(readFileSync(target, "utf-8") === "Role develop; branch main", "apply button did not update the target file");
 const appliedStatus = state.statuses.filter(([key]) => key === "template").map(([, text]) => text).at(-1);
-check(appliedStatus === "template ✓ · role=develop", `status after apply: ${appliedStatus}`);
+check(appliedStatus === "template ✓ role=develop", `status after apply: ${appliedStatus}`);
 
 // Recompute the computed variable.
 state.script.push(state.selects.at(-1).options.find((option) => option.startsWith("branch = main")));
@@ -234,12 +236,12 @@ check(
 	`applied version delivered: ${JSON.stringify(sections.contextFiles)}`,
 );
 const editedStatus = state.statuses.filter(([key]) => key === "template").map(([, text]) => text).at(-1);
-check(editedStatus === "template ! · role=develop", `status after the source edit: ${editedStatus}`);
+check(editedStatus === "template ! role=develop", `status after the source edit: ${editedStatus}`);
 state.script.push("update current session context");
 await command.handler("", runner.createCommandContext());
 check(readFileSync(target, "utf-8") === "Role develop; edit main", "button applied the source edit");
 const afterEditStatus = state.statuses.filter(([key]) => key === "template").map(([, text]) => text).at(-1);
-check(afterEditStatus === "template ✓ · role=develop", `status after applying the edit: ${afterEditStatus}`);
+check(afterEditStatus === "template ✓ role=develop", `status after applying the edit: ${afterEditStatus}`);
 
 created.session.dispose();
 rmSync(root, { recursive: true, force: true });
@@ -271,7 +273,7 @@ await resumed.session.bindExtensions({ uiContext: resumeUi.ui, mode: "rpc" });
 const resumeTarget = readFileSync(join(resumeEnv.projectDir, "AGENTS.md"), "utf-8");
 check(resumeTarget === "Role develop; branch main", `resume picked up the last var value: ${JSON.stringify(resumeTarget)}`);
 const resumeStatus = resumeUi.state.statuses.filter(([key]) => key === "template").map(([, text]) => text).at(-1);
-check(resumeStatus === "template ✓ · role=develop", `resume status: ${resumeStatus}`);
+check(resumeStatus === "template ✓ role=develop", `resume status: ${resumeStatus}`);
 resumed.session.dispose();
 rmSync(resumeRoot, { recursive: true, force: true });
 
@@ -293,7 +295,7 @@ const fresh = await pi.createAgentSession({
 await fresh.session.bindExtensions({ uiContext: freshUi.ui, mode: "rpc" });
 check(readFileSync(join(freshEnv.projectDir, "AGENTS.md"), "utf-8") === "Role preflight; branch main", "new session — machine value");
 const freshStatus = freshUi.state.statuses.filter(([key]) => key === "template").map(([, text]) => text).at(-1);
-check(freshStatus === "template ✓", `new session status: ${freshStatus}`);
+check(freshStatus === "template ✓ role=preflight", `new session status: ${freshStatus}`);
 fresh.session.dispose();
 rmSync(freshRoot, { recursive: true, force: true });
 
@@ -332,7 +334,7 @@ check(
 );
 check(readFileSync(inputTarget, "utf-8") === "Note: empty", "line input did not apply the context");
 const inputStatus = inputUi.state.statuses.filter(([key]) => key === "template").map(([, text]) => text).at(-1);
-check(inputStatus === "template ! · note=hello", `status after line input: ${inputStatus}`);
+check(inputStatus === "template !", `status after line input: ${inputStatus}`);
 
 // Esc in the RPC value dialog also returns to the menu.
 const rpcSelectsBefore = inputUi.state.selects.length;
@@ -437,7 +439,7 @@ rewriteUi.state.script.push("role = preflight", "develop");
 await rewriteCommand().handler("", rewriteContext());
 const varEntriesBeforeRewrite = rewriteVarEntries();
 check(readFileSync(promptTarget, "utf-8") === "Hello preflight", "variable change did not apply the target file");
-check(rewriteStatus() === "template ! · role=develop", `status before the rewrite: ${rewriteStatus()}`);
+check(rewriteStatus() === "template ! role=develop", `status before the rewrite: ${rewriteStatus()}`);
 
 // Button: files rewritten; versions, memory and session records untouched.
 rewriteUi.state.script.push("rewrite files on disk");
@@ -446,7 +448,7 @@ check(readFileSync(promptTarget, "utf-8") === "Hello develop", `prompt target fi
 check(readFileSync(agentsTarget, "utf-8") === "Role develop; branch main", `agent target file rewritten: ${JSON.stringify(readFileSync(agentsTarget, "utf-8"))}`);
 check(rewriteSession.session.extensionRunner === rewriteRunner, "rewrite restarted the extension runtime");
 check(reloadCalls === 0, `rewrite called reload ${reloadCalls} times`);
-check(rewriteStatus() === "template ! · role=develop", `status after the rewrite: ${rewriteStatus()}`);
+check(rewriteStatus() === "template ! role=develop", `status after the rewrite: ${rewriteStatus()}`);
 check(rewriteVarEntries() === varEntriesBeforeRewrite, "rewrite wrote a session record");
 check(promptTemplate()?.content === "Hello preflight", `rewrite does not re-read the loader: ${JSON.stringify(promptTemplate()?.content)}`);
 check(rewriteUi.state.notifications.at(-1)?.message === "pi-template: targets rewritten", `rewrite message: ${JSON.stringify(rewriteUi.state.notifications.at(-1))}`);
@@ -468,7 +470,7 @@ check(
 // The apply button aligns versions; rewritten targets stay fresh.
 rewriteUi.state.script.push("update current session context");
 await rewriteCommand().handler("", rewriteContext());
-check(rewriteStatus() === "template ✓ · role=develop", `status after apply: ${rewriteStatus()}`);
+check(rewriteStatus() === "template ✓ role=develop", `status after apply: ${rewriteStatus()}`);
 check(readFileSync(promptTarget, "utf-8") === "Hello develop", "apply corrupted the rewritten target file");
 
 const rewriteOptionsList = rewriteUi.state.selects.at(-1).options;
@@ -566,6 +568,99 @@ check(
 );
 broken.session.dispose();
 rmSync(brokenRoot, { recursive: true, force: true });
+
+// ——— Quick switch: ctrl+r cycles the value, alt+r cycles the status variable ———
+const switchRoot = mkdtempSync(join(tmpdir(), "pi-template-switch-"));
+process.env.PI_CODING_AGENT_DIR = join(switchRoot, "agent");
+const switchEnv = await makeEnvironment(switchRoot);
+writeFileSync(
+	join(switchEnv.agentDir, "template.json"),
+	JSON.stringify({
+		vars: {
+			role: { values: ["preflight", "develop"], initial: "preflight" },
+			mode: { values: ["plan", "code"], initial: "plan" },
+			note: { initial: "draft" },
+		},
+		statusVariable: "role",
+	}),
+);
+writeFileSync(join(switchEnv.projectDir, "AGENTS.md.template"), "Role {{role}}; mode {{mode}}; note {{note}}");
+const switchUi = makeUi("tui");
+const switchSession = await pi.createAgentSession({
+	cwd: switchEnv.projectDir,
+	agentDir: switchEnv.agentDir,
+	modelRuntime: switchEnv.modelRuntime,
+	model: switchEnv.model,
+	thinkingLevel: "low",
+	resourceLoader: switchEnv.loader,
+	sessionManager: switchEnv.sessionManager,
+	settingsManager: switchEnv.settingsManager,
+});
+await switchSession.session.bindExtensions({ uiContext: switchUi.ui, mode: "tui" });
+const switchRunner = switchSession.session.extensionRunner;
+const switchTarget = join(switchEnv.projectDir, "AGENTS.md");
+const switchConfigPath = join(switchEnv.agentDir, "template.json");
+const switchConfig = () => JSON.parse(readFileSync(switchConfigPath, "utf-8"));
+const switchStatus = () => switchUi.state.statuses.filter(([key]) => key === "template").map(([, text]) => text).at(-1);
+const switchVarEntries = () =>
+	switchEnv.sessionManager.getEntries().filter((entry) => entry.type === "custom" && entry.customType === "var");
+
+check(readFileSync(switchTarget, "utf-8") === "Role preflight; mode plan; note draft", "quick switch: startup target file");
+check(switchStatus() === "template ✓ role=preflight", `quick switch: status with the variable: ${switchStatus()}`);
+
+// Interactive mode passes its effective keybindings, where `app.session.rename`
+// defaults to ctrl+r: the extension wins and pi reports the conflict.
+const shortcuts = switchRunner.getShortcuts({ "app.session.rename": "ctrl+r" });
+check(shortcuts.has("ctrl+r") && shortcuts.has("alt+r"), `shortcuts registered: ${[...shortcuts.keys()].join(", ")}`);
+check(
+	switchRunner.getShortcutDiagnostics().some((entry) => entry.message.includes("ctrl+r")),
+	`ctrl+r overrides the built-in rename session: ${JSON.stringify(switchRunner.getShortcutDiagnostics())}`,
+);
+const ctrlR = shortcuts.get("ctrl+r");
+const altR = shortcuts.get("alt+r");
+
+await ctrlR.handler(switchRunner.createContext());
+const firstRecord = switchVarEntries().at(-1)?.data;
+check(firstRecord?.name === "role" && firstRecord?.value === "develop", `ctrl+r wrote the var record: ${JSON.stringify(firstRecord)}`);
+check(readFileSync(switchTarget, "utf-8") === "Role preflight; mode plan; note draft", "ctrl+r applied the context");
+check(switchStatus() === "template ! role=develop", `ctrl+r status: ${switchStatus()}`);
+check(switchUi.state.notifications.at(-1)?.message === "pi-template: role = develop", `ctrl+r message: ${switchUi.state.notifications.at(-1)?.message}`);
+
+await ctrlR.handler(switchRunner.createContext());
+check(switchStatus() === "template ✓ role=preflight", `ctrl+r ring wrap: ${switchStatus()}`);
+check(switchVarEntries().length === 2, `ctrl+r ring wrote a second record: ${switchVarEntries().length}`);
+
+await altR.handler(switchRunner.createContext());
+check(switchConfig().statusVariable === "mode", `alt+r wrote statusVariable: ${JSON.stringify(switchConfig().statusVariable)}`);
+check(
+	switchConfig().vars.role.values.length === 2 && switchConfig().vars.note.initial === "draft",
+	`alt+r kept the rest of the config: ${JSON.stringify(switchConfig())}`,
+);
+check(switchStatus() === "template ✓ mode=plan", `alt+r status: ${switchStatus()}`);
+check(switchUi.state.notifications.at(-1)?.message === "pi-template: status variable = mode", `alt+r message: ${switchUi.state.notifications.at(-1)?.message}`);
+check(
+	switchVarEntries().length === 2 && readFileSync(switchTarget, "utf-8") === "Role preflight; mode plan; note draft",
+	"alt+r changed the session context",
+);
+
+await altR.handler(switchRunner.createContext());
+check(switchConfig().statusVariable === "role", `alt+r ring wrap: ${JSON.stringify(switchConfig().statusVariable)}`);
+
+// Shortcuts are dispatched by the interactive mode only: an RPC or headless
+// call does nothing.
+const entriesBeforeNoUi = switchVarEntries().length;
+switchRunner.setUIContext(switchUi.ui, "rpc");
+await ctrlR.handler(switchRunner.createContext());
+altR.handler(switchRunner.createContext());
+switchRunner.setUIContext(undefined);
+await ctrlR.handler(switchRunner.createContext());
+altR.handler(switchRunner.createContext());
+check(
+	switchVarEntries().length === entriesBeforeNoUi && switchConfig().statusVariable === "role",
+	"shortcuts outside the interactive mode changed nothing",
+);
+switchSession.session.dispose();
+rmSync(switchRoot, { recursive: true, force: true });
 
 console.log(failures === 0 ? "LIVE UX OK" : `LIVE UX FAIL: ${failures}`);
 process.exitCode = failures === 0 ? 0 : 1;

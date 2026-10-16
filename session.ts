@@ -40,6 +40,7 @@ import {
 	computeView,
 	isComputedVariable,
 	loadVarsConfig,
+	writeStatusVariable,
 } from "./vars.ts";
 
 export type SessionStartReason = "startup" | "reload" | "new" | "resume" | "fork";
@@ -141,6 +142,7 @@ export class TemplateSession {
 	private readonly warned = new Set<string>();
 
 	private config: VarsConfig | undefined;
+	private statusVariableName: string | undefined;
 	private agentName: string | undefined;
 	private projectTrusted = false;
 	private startReason: SessionStartReason = "startup";
@@ -221,6 +223,7 @@ export class TemplateSession {
 			return;
 		}
 		this.config = loaded;
+		this.statusVariableName = loaded.statusVariable;
 		this.discoverInputs();
 		if (reason === "reload") {
 			// The disk is the source of truth for the applied version: the new
@@ -936,6 +939,11 @@ export class TemplateSession {
 		return { ...this.values };
 	}
 
+	/** Name of the variable the status line shows (top-level `statusVariable`), if any. */
+	statusVariable(): string | undefined {
+		return this.statusVariableName;
+	}
+
 	sessionProblems(): readonly string[] {
 		return this.problems;
 	}
@@ -986,6 +994,21 @@ export class TemplateSession {
 		this.overrides[name] = value;
 		this.view[name] = value;
 		await this.renderCurrent();
+		return { ok: true };
+	}
+
+	/**
+	 * `alt+r`: write the status variable into `template.json` and adopt the
+	 * re-read config: the file is validated anew. A write error leaves the
+	 * current variable as is.
+	 */
+	saveStatusVariable(name: string): { ok: boolean; problem?: string } {
+		if (!this.started) return { ok: false, problem: "view not built" };
+		const written = writeStatusVariable(this.agentDir, name);
+		if (!written.ok) return written;
+		const loaded = loadVarsConfig(this.agentDir, this.env);
+		if ("problem" in loaded) return { ok: false, problem: loaded.problem };
+		this.statusVariableName = loaded.statusVariable;
 		return { ok: true };
 	}
 

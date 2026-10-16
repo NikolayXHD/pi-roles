@@ -19,8 +19,10 @@
  *   render with spawn parameters).
  *
  * Zone C: session overrides are read from `"var"` records at start
- * (resume) and written by the `/template` command; the status line is
- * updated at start, on every turn and on explicit menu actions.
+ * (resume) and written by the `/template` command; the `ctrl+r`/`alt+r`
+ * shortcuts cycle the status variable value and the variable itself. The
+ * status line is updated at start, on every turn and on explicit menu
+ * actions and shortcuts.
  *
  * External CLI and machine runs stay as in the design: registration
  * without `requireForAllRunners`, nothing is bypassed or masked.
@@ -38,7 +40,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { releaseLock } from "./lock.ts";
 import { type TargetBracket, TemplateSession, type TemplateSessionHost } from "./session.ts";
-import { clearTemplateStatus, registerTemplateCommand, updateTemplateStatus } from "./ui.ts";
+import { type TemplateUiDeps, clearTemplateStatus, cycleStatusVariable, cycleStatusVariableValue, registerTemplateCommand, updateTemplateStatus } from "./ui.ts";
 import { readVarOverrides } from "./ui-model.ts";
 
 /** Extension id in the pi-subagents required extensions registry. */
@@ -182,7 +184,7 @@ export default function piTemplate(pi: ExtensionAPI): void {
 		// Resume: the last value of each variable from `"var"` records; old-format
 		// records (`customType: "role"`) are not read.
 		await session.start(hostOf(ctx, overridesOf(ctx)), event.reason);
-		updateTemplateStatus(ctx, session, overridesOf(ctx));
+		updateTemplateStatus(ctx, session);
 
 		const module = await loadRequiredChildModuleOnce(agentDir, ctx.cwd);
 		if (module === undefined) {
@@ -221,7 +223,7 @@ export default function piTemplate(pi: ExtensionAPI): void {
 				hostOf(ctx),
 			);
 			// The source comparison may have marked the context stale.
-			updateTemplateStatus(ctx, session, overridesOf(ctx));
+			updateTemplateStatus(ctx, session);
 		} catch (error) {
 			warn(ctx, `section delivery failed: ${errorMessage(error)}`);
 		}
@@ -231,7 +233,7 @@ export default function piTemplate(pi: ExtensionAPI): void {
 		const session = sessionOf(ctx);
 		if (session === undefined) return;
 		await session.onModelChanged(hostOf(ctx));
-		updateTemplateStatus(ctx, session, overridesOf(ctx));
+		updateTemplateStatus(ctx, session);
 	};
 
 	pi.on("model_select", async (_event, ctx) => {
@@ -246,7 +248,7 @@ export default function piTemplate(pi: ExtensionAPI): void {
 		const session = sessionOf(ctx);
 		if (session === undefined) return;
 		await session.onSessionName(event.name, hostOf(ctx));
-		updateTemplateStatus(ctx, session, overridesOf(ctx));
+		updateTemplateStatus(ctx, session);
 	});
 
 	pi.on("tool_call", async (event, ctx) => {
@@ -285,7 +287,16 @@ export default function piTemplate(pi: ExtensionAPI): void {
 		}
 	});
 
-	registerTemplateCommand(pi, { sessionOf, overridesOf });
+	const deps: TemplateUiDeps = { sessionOf, overridesOf };
+	registerTemplateCommand(pi, deps);
+	pi.registerShortcut("ctrl+r", {
+		description: "pi-template: cycle the value of the status variable",
+		handler: (ctx) => cycleStatusVariableValue(pi, deps, ctx),
+	});
+	pi.registerShortcut("alt+r", {
+		description: "pi-template: cycle the status variable",
+		handler: (ctx) => cycleStatusVariable(deps, ctx),
+	});
 }
 
 function errorMessage(error: unknown): string {
