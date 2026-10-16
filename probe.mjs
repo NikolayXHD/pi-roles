@@ -2495,7 +2495,7 @@ scenario("when_age_formatted_then_compact", async () => {
 	);
 });
 
-/** Status line: "prompts are stale" and overrides compactly. */
+/** Status line: a state glyph and overrides compactly. */
 scenario("when_status_text_then_stale_and_overrides", async () => {
 	const fact = (name, value) => ({
 		name,
@@ -2506,23 +2506,23 @@ scenario("when_status_text_then_stale_and_overrides", async () => {
 		overridden: true,
 		implicit: false,
 	});
-	assertEqual(statusLineText(false, []), "template · prompts are up to date", "status without overrides");
+	assertEqual(statusLineText(false, []), "template ✓", "status without overrides");
 	assertEqual(
 		statusLineText(true, [fact("role", "develop")]),
-		"template · prompts are stale · role=develop",
+		"template ! · role=develop",
 		"status with an override",
 	);
 	assertEqual(
 		statusLineText(true, [fact("a", "1"), fact("b", "2"), fact("c", "3"), fact("d", "4")]),
-		"template · prompts are stale · a=1, b=2, c=3, +1",
+		"template ! · a=1, b=2, c=3, +1",
 		"overrides not compact",
 	);
 	assertEqual(
 		statusLineText(true, [fact("long", "0123456789abcdefghij")]),
-		"template · prompts are stale · long=0123456789abcde…",
+		"template ! · long=0123456789abcde…",
 		"long value not truncated",
 	);
-	assertEqual(statusLineText(undefined, []), "template · view not built", "status without a view");
+	assertEqual(statusLineText(undefined, []), "template ‼", "status without a view");
 	assertEqual(
 		implicitLine({ model: "p/m", level: "max" }),
 		"model = p/m · level = max (implicit, read-only)",

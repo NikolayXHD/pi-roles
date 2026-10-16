@@ -9,7 +9,7 @@
  *
  * A variable change writes a `"var"` record (payload `{name, value}`) and
  * does not apply the context — only marks it stale. The status line is a
- * single `template` key: "prompts are stale" plus compact session
+ * single `template` key: one glyph for the state plus compact session
  * overrides.
  */
 
@@ -20,7 +20,7 @@ import {
 	type MenuItem,
 	type VariableFacts,
 	changeVariable,
-	contextStatusText,
+	contextStatusMark,
 	formatAge,
 	implicitLine,
 	menuItemLabel,
@@ -51,7 +51,7 @@ export function registerTemplateCommand(pi: ExtensionAPI, deps: TemplateUiDeps):
 	});
 }
 
-/** Status line: "prompts are stale" and session overrides. */
+/** Status line: one state glyph and session overrides. */
 export function updateTemplateStatus(
 	ctx: ExtensionContext,
 	session: TemplateSession | undefined,
@@ -218,7 +218,8 @@ function renderMenu(
 	const stale = session.isStale();
 	const lines = [theme.fg("accent", "─".repeat(renderWidth))];
 	lines.push(truncateToWidth(theme.fg("accent", " template — session context"), renderWidth));
-	lines.push(truncateToWidth(theme.fg(stale ? "warning" : "success", ` ${contextStatusText(stale)}`), renderWidth));
+	const statusColor: ThemeColor = stale === undefined ? "error" : stale ? "warning" : "success";
+	lines.push(truncateToWidth(theme.fg(statusColor, ` ${contextStatusMark(stale)}`), renderWidth));
 	lines.push(
 		truncateToWidth(theme.fg("dim", ` ${implicitLine(view)}`), renderWidth),
 	);
@@ -330,7 +331,7 @@ async function changeSessionVariable(
 		ctx.ui.notify(`pi-template: ${facts.name} = ${value} — already set`, "info");
 		return "done";
 	}
-	ctx.ui.notify(`pi-template: ${facts.name} = ${value} — ${contextStatusText(session.isStale())}`, "info");
+	ctx.ui.notify(`pi-template: ${facts.name} = ${value} — ${contextStatusMark(session.isStale())}`, "info");
 	return "done";
 }
 
@@ -346,7 +347,7 @@ async function chooseValue(ctx: ExtensionCommandContext, facts: VariableFacts): 
 }
 
 function menuTitle(session: TemplateSession): string {
-	return `pi-template · ${contextStatusText(session.isStale())}`;
+	return `pi-template · ${contextStatusMark(session.isStale())}`;
 }
 
 /** Without UI: state and menu items as text, nothing changes. */

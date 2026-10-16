@@ -177,7 +177,8 @@ model depends on `model@`").
 
 The extension's only command opens the context management menu:
 
-- session context status: "prompts are up to date" or "prompts are stale";
+- session context status as one glyph: `✓` applied, `!` a re-render is
+  waiting, `‼` no view built (a broken config);
 - implicit `model`/`level` as a read-only row;
 - rows of declared variables: the value; for computed ones the value age and
   recompute on Enter; for overridden ones "session override" and a value
@@ -192,10 +193,8 @@ session (`customType: "var"`, payload `{name, value}`) and does not update
 the context by itself — only the status changes. Resume picks up the last
 value of each variable from the records.
 
-**The status line** shows `template · prompts are up to date` /
-`template · prompts are stale`, with session overrides compactly
-(`name=value`, then `+N`); with no view built it shows `template · view not
-built`.
+**The status line** shows `template ✓` / `template !` /
+`template ‼`, with session overrides compactly (`name=value`, then `+N`).
 
 ## Session context versions
 

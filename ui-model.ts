@@ -141,9 +141,9 @@ export function formatAge(ageMs: number): string {
 	return `${Math.floor(hours / 24)} d`;
 }
 
-/** Session context status: a version mismatch is "prompts are stale". */
-export function contextStatusText(stale: boolean): string {
-	return stale ? "prompts are stale" : "prompts are up to date";
+/** Session context status glyph: `✓` applied, `!` a re-render is waiting, `‼` no view. */
+export function contextStatusMark(stale: boolean | undefined): string {
+	return stale === undefined ? "‼" : stale ? "!" : "✓";
 }
 
 /** Implicit variable row: session `model`/`level`, read-only. */
@@ -152,14 +152,14 @@ export function implicitLine(view: Record<string, string>): string {
 }
 
 /**
- * Status line text: `template · status · overrides` — session overrides
- * compactly (up to three pairs, then `+N`). `stale === undefined` means the
- * view is not built.
+ * Status line text: `template <glyph>` plus session overrides compactly
+ * (up to three pairs, then `+N`). `stale === undefined` means no view was
+ * built (a broken config).
  */
 export function statusLineText(stale: boolean | undefined, overrides: readonly VariableFacts[]): string {
-	const status = stale === undefined ? "view not built" : contextStatusText(stale);
 	const compact = compactOverrides(overrides);
-	return compact === undefined ? `template · ${status}` : `template · ${status} · ${compact}`;
+	const base = `template ${contextStatusMark(stale)}`;
+	return compact === undefined ? base : `${base} · ${compact}`;
 }
 
 /** Minimum session for changing a variable (structural type of `TemplateSession`). */

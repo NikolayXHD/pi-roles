@@ -159,13 +159,13 @@ const target = join(env.projectDir, "AGENTS.md");
 const initialTarget = readFileSync(target, "utf-8");
 check(initialTarget === "Role preflight; branch main", `startup target file: ${JSON.stringify(initialTarget)}`);
 const statuses = state.statuses.filter(([key]) => key === "template").map(([, text]) => text);
-check(statuses.includes("template · prompts are up to date"), `status after start: ${JSON.stringify(statuses)}`);
+check(statuses.includes("template ✓"), `status after start: ${JSON.stringify(statuses)}`);
 
 // RPC menu: first change role, then the value develop.
 state.script.push("role = preflight", "develop");
 await command.handler("", runner.createCommandContext());
 const firstSelect = state.selects[0];
-check(firstSelect.title.includes("prompts are up to date"), `menu title with status: ${firstSelect.title}`);
+check(firstSelect.title.includes("pi-template · ✓"), `menu title with status: ${firstSelect.title}`);
 check(
 	firstSelect.title.includes("model = fake/fake") && firstSelect.title.includes("(implicit, read-only)"),
 	`RPC menu: implicit read-only in the title: ${JSON.stringify(firstSelect.title)}`,
@@ -179,15 +179,15 @@ const varEntries = env.sessionManager.getEntries().filter((entry) => entry.type 
 check(varEntries.length === 1 && varEntries[0].data.name === "role" && varEntries[0].data.value === "develop", `var record: ${JSON.stringify(varEntries.map((entry) => entry.data))}`);
 check(readFileSync(target, "utf-8") === "Role preflight; branch main", "variable change did not apply the context");
 const staleStatus = state.statuses.filter(([key]) => key === "template").map(([, text]) => text).at(-1);
-check(staleStatus === "template · prompts are stale · role=develop", `status after the change: ${staleStatus}`);
-check(state.notifications.at(-1)?.message.includes("prompts are stale"), `message after the change: ${state.notifications.at(-1)?.message}`);
+check(staleStatus === "template ! · role=develop", `status after the change: ${staleStatus}`);
+check(state.notifications.at(-1)?.message === "pi-template: role = develop — !", `message after the change: ${state.notifications.at(-1)?.message}`);
 
 // Apply button.
 state.script.push("update current session context");
 await command.handler("", runner.createCommandContext());
 check(readFileSync(target, "utf-8") === "Role develop; branch main", "apply button did not update the target file");
 const appliedStatus = state.statuses.filter(([key]) => key === "template").map(([, text]) => text).at(-1);
-check(appliedStatus === "template · prompts are up to date · role=develop", `status after apply: ${appliedStatus}`);
+check(appliedStatus === "template ✓ · role=develop", `status after apply: ${appliedStatus}`);
 
 // Recompute the computed variable.
 state.script.push(state.selects.at(-1).options.find((option) => option.startsWith("branch = main")));
@@ -204,7 +204,7 @@ check(state.component !== undefined, "TUI menu opened");
 const lines = state.component.render(90);
 const text = lines.join("\n");
 check(text.includes("template — session context"), "TUI menu: title");
-check(text.includes("prompts are up to date"), "TUI menu: status");
+check(text.includes("✓"), "TUI menu: status");
 check(text.includes("model = fake/fake") && text.includes("level = off (implicit, read-only)"), "TUI menu: implicit read-only");
 check(text.includes("role = develop") && text.includes("session override"), "TUI menu: override");
 check(/branch = main · computed, \d+ s/.test(text), "TUI menu: value age");
@@ -234,12 +234,12 @@ check(
 	`applied version delivered: ${JSON.stringify(sections.contextFiles)}`,
 );
 const editedStatus = state.statuses.filter(([key]) => key === "template").map(([, text]) => text).at(-1);
-check(editedStatus === "template · prompts are stale · role=develop", `status after the source edit: ${editedStatus}`);
+check(editedStatus === "template ! · role=develop", `status after the source edit: ${editedStatus}`);
 state.script.push("update current session context");
 await command.handler("", runner.createCommandContext());
 check(readFileSync(target, "utf-8") === "Role develop; edit main", "button applied the source edit");
 const afterEditStatus = state.statuses.filter(([key]) => key === "template").map(([, text]) => text).at(-1);
-check(afterEditStatus === "template · prompts are up to date · role=develop", `status after applying the edit: ${afterEditStatus}`);
+check(afterEditStatus === "template ✓ · role=develop", `status after applying the edit: ${afterEditStatus}`);
 
 created.session.dispose();
 rmSync(root, { recursive: true, force: true });
@@ -271,7 +271,7 @@ await resumed.session.bindExtensions({ uiContext: resumeUi.ui, mode: "rpc" });
 const resumeTarget = readFileSync(join(resumeEnv.projectDir, "AGENTS.md"), "utf-8");
 check(resumeTarget === "Role develop; branch main", `resume picked up the last var value: ${JSON.stringify(resumeTarget)}`);
 const resumeStatus = resumeUi.state.statuses.filter(([key]) => key === "template").map(([, text]) => text).at(-1);
-check(resumeStatus === "template · prompts are up to date · role=develop", `resume status: ${resumeStatus}`);
+check(resumeStatus === "template ✓ · role=develop", `resume status: ${resumeStatus}`);
 resumed.session.dispose();
 rmSync(resumeRoot, { recursive: true, force: true });
 
@@ -293,7 +293,7 @@ const fresh = await pi.createAgentSession({
 await fresh.session.bindExtensions({ uiContext: freshUi.ui, mode: "rpc" });
 check(readFileSync(join(freshEnv.projectDir, "AGENTS.md"), "utf-8") === "Role preflight; branch main", "new session — machine value");
 const freshStatus = freshUi.state.statuses.filter(([key]) => key === "template").map(([, text]) => text).at(-1);
-check(freshStatus === "template · prompts are up to date", `new session status: ${freshStatus}`);
+check(freshStatus === "template ✓", `new session status: ${freshStatus}`);
 fresh.session.dispose();
 rmSync(freshRoot, { recursive: true, force: true });
 
@@ -332,7 +332,7 @@ check(
 );
 check(readFileSync(inputTarget, "utf-8") === "Note: empty", "line input did not apply the context");
 const inputStatus = inputUi.state.statuses.filter(([key]) => key === "template").map(([, text]) => text).at(-1);
-check(inputStatus === "template · prompts are stale · note=hello", `status after line input: ${inputStatus}`);
+check(inputStatus === "template ! · note=hello", `status after line input: ${inputStatus}`);
 
 // Esc in the RPC value dialog also returns to the menu.
 const rpcSelectsBefore = inputUi.state.selects.length;
@@ -364,7 +364,7 @@ const entriesBeforeDigest = inputEnv.sessionManager.getEntries().length;
 await inputCommand.handler("", inputRunner.createCommandContext());
 noopUi.notify = originalNotify;
 const digestMessage = digest.at(-1)?.message ?? "";
-check(digestMessage.includes("pi-template · prompts are stale"), `digest: status: ${JSON.stringify(digestMessage)}`);
+check(digestMessage.includes("pi-template · !"), `digest: status: ${JSON.stringify(digestMessage)}`);
 check(
 	digestMessage.includes("model = fake/fake") && digestMessage.includes("(implicit, read-only)"),
 	"digest: implicit read-only",
@@ -437,7 +437,7 @@ rewriteUi.state.script.push("role = preflight", "develop");
 await rewriteCommand().handler("", rewriteContext());
 const varEntriesBeforeRewrite = rewriteVarEntries();
 check(readFileSync(promptTarget, "utf-8") === "Hello preflight", "variable change did not apply the target file");
-check(rewriteStatus() === "template · prompts are stale · role=develop", `status before the rewrite: ${rewriteStatus()}`);
+check(rewriteStatus() === "template ! · role=develop", `status before the rewrite: ${rewriteStatus()}`);
 
 // Button: files rewritten; versions, memory and session records untouched.
 rewriteUi.state.script.push("rewrite files on disk");
@@ -446,7 +446,7 @@ check(readFileSync(promptTarget, "utf-8") === "Hello develop", `prompt target fi
 check(readFileSync(agentsTarget, "utf-8") === "Role develop; branch main", `agent target file rewritten: ${JSON.stringify(readFileSync(agentsTarget, "utf-8"))}`);
 check(rewriteSession.session.extensionRunner === rewriteRunner, "rewrite restarted the extension runtime");
 check(reloadCalls === 0, `rewrite called reload ${reloadCalls} times`);
-check(rewriteStatus() === "template · prompts are stale · role=develop", `status after the rewrite: ${rewriteStatus()}`);
+check(rewriteStatus() === "template ! · role=develop", `status after the rewrite: ${rewriteStatus()}`);
 check(rewriteVarEntries() === varEntriesBeforeRewrite, "rewrite wrote a session record");
 check(promptTemplate()?.content === "Hello preflight", `rewrite does not re-read the loader: ${JSON.stringify(promptTemplate()?.content)}`);
 check(rewriteUi.state.notifications.at(-1)?.message === "pi-template: targets rewritten", `rewrite message: ${JSON.stringify(rewriteUi.state.notifications.at(-1))}`);
@@ -468,7 +468,7 @@ check(
 // The apply button aligns versions; rewritten targets stay fresh.
 rewriteUi.state.script.push("update current session context");
 await rewriteCommand().handler("", rewriteContext());
-check(rewriteStatus() === "template · prompts are up to date · role=develop", `status after apply: ${rewriteStatus()}`);
+check(rewriteStatus() === "template ✓ · role=develop", `status after apply: ${rewriteStatus()}`);
 check(readFileSync(promptTarget, "utf-8") === "Hello develop", "apply corrupted the rewritten target file");
 
 const rewriteOptionsList = rewriteUi.state.selects.at(-1).options;
@@ -558,7 +558,7 @@ const broken = await pi.createAgentSession({
 });
 await broken.session.bindExtensions({ uiContext: brokenUi.ui, mode: "rpc" });
 const brokenStatus = brokenUi.state.statuses.filter(([key]) => key === "template").map(([, text]) => text).at(-1);
-check(brokenStatus === "template · view not built", `status with a broken config: ${brokenStatus}`);
+check(brokenStatus === "template ‼", `status with a broken config: ${brokenStatus}`);
 await broken.session.extensionRunner.getCommand("template").handler("", broken.session.extensionRunner.createCommandContext());
 check(
 	brokenUi.state.notifications.some((entry) => entry.type === "warning" && entry.message.includes("context not built")),

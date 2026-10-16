@@ -70,9 +70,9 @@ hand below.
 
 ## What to look at and where
 
-- **Status line**: `template · prompts are up to date` / `… prompts are
-  stale`; session overrides compactly (`role=develop`, then `+N`);
-  `template · view not built` with a broken config.
+- **Status line**: `template ✓` / `template !` (session overrides
+  compactly: `role=develop`, then `+N`) / `template ‼` with a broken
+  config.
 - **Session file** (`PI_SESSION_FILE`): a variable change gives a
   `customType: "var"` record with `data` of the form `{name, value}`; there
   are no new-format role records (`"role"` is the old format and is
@@ -96,7 +96,7 @@ env-computed one.
    the sources; no raw tags. The role comes from `initial` (in the live
    `~/.pi/agent`: `preflight`).
 2. **`/reload`.** Edit `AGENTS.md.template` without applying: the next turn
-   sees the previous text and the status says "prompts are stale". Run
+   sees the previous text and the status shows `!`. Run
    `/reload`. Expectation: the target was rewritten before pi re-read it,
    the text is new, versions match.
 3. **Variable change.** `/template` → a static variable row → choose or
@@ -118,8 +118,8 @@ env-computed one.
 8. **New session.** Start anew without resume: machine values, status
    without overrides.
 9. **Broken config.** Corrupt `template.json`. Expectation: `/template`
-   answers with the warning "context not built"; the status is `view not
-   built`; no crash, previous targets are in place.
+   answers with the warning "context not built"; the status is `‼`; no
+   crash, previous targets are in place.
 10. **Read a skill body.** Let the model read `SKILL.md` while another pi
     window holds its own target. Expectation: under the lock the target is
     brought to this session's applied version, the lock is released on
